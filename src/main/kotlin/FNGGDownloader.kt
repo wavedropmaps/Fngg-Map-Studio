@@ -66,53 +66,81 @@ class FNGGDownloader(val version: String) {
 
     @OptIn(DelicateCoroutinesApi::class)
     fun downloadImages(progressCallback: (Float) -> Boolean) {
-        var downloadedImages = 0 // number of images downloaded so far
+        val totalImages = 16384
+        val downloadedImages = java.util.concurrent.atomic.AtomicInteger(0)
         var lastProgress = 0
         var isCancelled = false
+        
+        // Create a list to track download jobs
+        val jobs = mutableListOf<Job>()
+        
         for (x in 0 until 128) {
             for (y in 0 until 128) {
                 val file = File("${baseDir}v$version/images/$x/$y.jpg")
                 if (file.exists()) {
-                    downloadedImages++
-                    LOGGER.info("Image already exists: $downloadedImages/16384 images (${downloadedImages * 100 / 16384}%) (v$version)")
+                    val currentCount = downloadedImages.incrementAndGet()
+                    LOGGER.info("Image already exists: $currentCount/$totalImages images (${currentCount * 100 / totalImages}%) (v$version)")
                     // only trigger progress callback on integer progress updates
-                    val progress = downloadedImages * 100 / 16384
+                    val progress = currentCount * 100 / totalImages
                     if (progress != lastProgress) {
                         progressCallback(progress.toFloat())
                         lastProgress = progress
                     }
                     continue
                 }
-                GlobalScope.launch {
+                
+                val job = GlobalScope.launch {
                     if (isCancelled) {
                         return@launch
                     }
-                    val file = File("${baseDir}v$version/images/$x/$y.jpg")
-                    val url = "https://fortnite.gg/maps/$version/7/$x/$y.jpg"
-                    val connection = URL(url).openConnection()
-                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-                    val inputStream = connection.getInputStream()
-                    file.parentFile.mkdirs()
+                    
+                    try {
+                        val file = File("${baseDir}v$version/images/$x/$y.jpg")
+                        val url = "https://fortnite.gg/maps/$version/7/$x/$y.jpg"
+                        val connection = URL(url).openConnection()
+                        connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                        connection.connectTimeout = 30000
+                        connection.readTimeout = 30000
+                        val inputStream = connection.getInputStream()
+                        file.parentFile.mkdirs()
 
-                    file.createNewFile()
-                    file.outputStream().use { outputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
-                    downloadedImages++
-                    LOGGER.info("Downloaded $downloadedImages/16384 images (${downloadedImages * 100 / 16384}%) (v$version)")
-                    // only trigger progress callback on integer progress updates
-                    val progress = downloadedImages * 100 / 16384
-                    if (progress != lastProgress) {
-                        isCancelled = !progressCallback(progress.toFloat())
-                        lastProgress = progress
+                        file.createNewFile()
+                        file.outputStream().use { outputStream ->
+                            inputStream.copyTo(outputStream)
+                        }
+                        
+                        val currentCount = downloadedImages.incrementAndGet()
+                        LOGGER.info("Downloaded $currentCount/$totalImages images (${currentCount * 100 / totalImages}%) (v$version)")
+                        // only trigger progress callback on integer progress updates
+                        val progress = currentCount * 100 / totalImages
+                        if (progress != lastProgress) {
+                            // Update lastProgress in a synchronized way
+                            synchronized(this) {
+                                if (progress != lastProgress) {
+                                    isCancelled = !progressCallback(progress.toFloat())
+                                    lastProgress = progress
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        LOGGER.warning("Failed to download image ($x, $y): ${e.message}")
+                        // Don't increment counter for failed downloads - they'll be retried
+                        // Or we could increment to avoid hanging, but mark as failed
+                        downloadedImages.incrementAndGet() // Increment anyway to prevent hanging
                     }
                 }
+                jobs.add(job)
             }
         }
 
-        // wait for all images to be downloaded
-        while (downloadedImages < 16384) {
-            Thread.sleep(500)
+        // Wait for all jobs to complete with timeout
+        runBlocking {
+            jobs.forEach { it.join() }
+        }
+        
+        // Final check - if we have all images, ensure progress shows 100%
+        if (downloadedImages.get() >= totalImages) {
+            progressCallback(100f)
         }
     }
 

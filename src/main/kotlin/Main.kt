@@ -50,22 +50,42 @@ fun MainScreen() {
     var finishedMap by remember { mutableStateOf<String?>(null) }
     val finishedMaps by remember { mutableStateOf(mutableListOf<String>()) }
     var finishedMapsScanned by remember { mutableStateOf(false) }
+    var isScanningMaps by remember { mutableStateOf(false) }
 
-    if (!finishedMapsScanned) {
-        finishedMaps.clear()
-        val baseDir = File(System.getProperty("user.home") + "/FNGGMapDownloader/")
-        if (baseDir.exists()) {
-            // scan all subfolders starting with v if they contain a file named "finalImage.png"
-            baseDir.listFiles()?.forEach { versionDir ->
-                if (versionDir.isDirectory && versionDir.name.startsWith("v")) {
-                    val finalImage = File("${versionDir.absolutePath}/finalImage.png")
-                    if (finalImage.exists()) {
-                        finishedMaps.add(finalImage.absolutePath)
+    // Function to scan for finished maps
+    fun scanFinishedMaps() {
+        if (isScanningMaps) return
+        
+        isScanningMaps = true
+        scope.launch(Dispatchers.IO) {
+            val newFinishedMaps = mutableListOf<String>()
+            val baseDir = File(System.getProperty("user.home") + "/FNGGMapDownloader/")
+            if (baseDir.exists()) {
+                // scan all subfolders starting with v if they contain a file named "finalImage.png"
+                baseDir.listFiles()?.forEach { versionDir ->
+                    if (versionDir.isDirectory && versionDir.name.startsWith("v")) {
+                        val finalImage = File("${versionDir.absolutePath}/finalImage.png")
+                        if (finalImage.exists()) {
+                            newFinishedMaps.add(finalImage.absolutePath)
+                        }
                     }
                 }
             }
+            
+            withContext(Dispatchers.Main) {
+                finishedMaps.clear()
+                finishedMaps.addAll(newFinishedMaps)
+                finishedMapsScanned = true
+                isScanningMaps = false
+            }
         }
-        finishedMapsScanned = true
+    }
+
+    // Initial scan on first load
+    LaunchedEffect(Unit) {
+        if (!finishedMapsScanned) {
+            scanFinishedMaps()
+        }
     }
 
     // Function to download map preview
@@ -281,8 +301,36 @@ fun MainScreen() {
             }
 
             // finished maps list
-            if (finishedMaps.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text("Finished Maps", style = MaterialTheme.typography.h4)
+                Button(
+                    onClick = { scanFinishedMaps() },
+                    enabled = !isScanningMaps,
+                    modifier = Modifier.padding(start = 8.dp)
+                ) {
+                    if (isScanningMaps) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Refresh")
+                    }
+                }
+            }
+            
+            if (isScanningMaps && finishedMaps.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else if (finishedMaps.isNotEmpty()) {
                 finishedMaps.forEach { map ->
                     Row(
                         modifier = Modifier.padding(bottom = 1.dp).fillMaxWidth()
@@ -316,6 +364,11 @@ fun MainScreen() {
                         }
                     }
                 }
+            } else if (!isScanningMaps) {
+                Text(
+                    "No finished maps found. Download a map to see it here.",
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
             }
         }
     }
