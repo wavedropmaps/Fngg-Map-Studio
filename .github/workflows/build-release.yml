@@ -1,0 +1,56 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+    
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+    
+    - name: Build with Gradle
+      run: ./gradlew build
+    
+    - name: Package application
+      run: ./gradlew packageDistributable
+    
+    - name: List build outputs
+      run: dir build\compose\binaries /s
+    
+    - name: Upload Windows MSI
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-msi
+        path: build/compose/binaries/main/msi/*.msi
+    
+    - name: Upload Windows EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-exe
+        path: build/compose/binaries/main/exe/*.exe
+    
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          build/compose/binaries/main/msi/*.msi
+          build/compose/binaries/main/exe/*.exe
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
