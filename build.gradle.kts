@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "de.wauhundeland"
-version = "1.0-SNAPSHOT"
+version = "1.1.0"
 
 repositories {
     mavenCentral()
@@ -30,7 +30,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "FNGG Map Dumper"
-            packageVersion = "1.0.0"
+            packageVersion = "1.1.0"
             vendor = "WauHundeland"
 
             windows {
