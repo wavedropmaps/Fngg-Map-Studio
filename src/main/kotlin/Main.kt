@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import de.wauhundeland.fnggmapdownloader.FNGGDownloader
+import de.wauhundeland.fnggmapdownloader.VersionScanner
 import kotlinx.coroutines.*
 import java.awt.Button
 
@@ -30,6 +31,7 @@ import java.io.File
 import java.io.InputStream
 import java.net.URL
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 @Preview
 fun MainScreen() {
@@ -51,6 +53,34 @@ fun MainScreen() {
     val finishedMaps by remember { mutableStateOf(mutableListOf<String>()) }
     var finishedMapsScanned by remember { mutableStateOf(false) }
     var isScanningMaps by remember { mutableStateOf(false) }
+    val bundledVersions = remember {
+        val stream = object {}::class.java.classLoader.getResourceAsStream("maps_list.txt")
+        stream?.bufferedReader()?.readLines()
+            ?.map { File(it).nameWithoutExtension }
+            ?: emptyList()
+    }
+    val recentVersionsFile = remember { File(System.getProperty("user.home") + "/FNGGMapDownloader/recent_versions.txt") }
+
+    fun loadRecentVersions(): List<VersionScanner.ScanResult>? {
+        if (!recentVersionsFile.exists()) return null
+        val versions = recentVersionsFile.readLines().filter { it.isNotBlank() }
+        return versions.map { VersionScanner.ScanResult(it) }.ifEmpty { null }
+    }
+
+    fun saveRecentVersions(versions: List<VersionScanner.ScanResult>) {
+        recentVersionsFile.parentFile?.mkdirs()
+        recentVersionsFile.writeText(versions.joinToString("\n") { it.version })
+    }
+
+    var recentVersions by remember {
+        mutableStateOf(
+            loadRecentVersions()
+                ?: bundledVersions.takeLast(5).reversed().map { VersionScanner.ScanResult(it) }
+        )
+    }
+    var isScanningVersions by remember { mutableStateOf(false) }
+    var scannedVersions by remember { mutableStateOf<List<VersionScanner.ScanResult>>(emptyList()) }
+    var scanMessage by remember { mutableStateOf<String?>(null) }
 
     // Function to scan for finished maps
     fun scanFinishedMaps() {
@@ -88,23 +118,27 @@ fun MainScreen() {
         }
     }
 
-    // Function to download map preview
+    // Function to download map preview. Legacy versions serve a jpg thumbnail; newer versions
+    // only serve webp, so jpg is tried first and webp is the fallback.
     fun downloadMapPreview(mapNumber: String, onDownloaded: (ImageBitmap) -> Unit) {
         job = scope.launch(Dispatchers.IO) {
-            val url = URL("https://fortnite.gg/maps/$mapNumber/0/0/0.jpg")
-            val connection = url.openConnection()
-            connection.connect()
-            val inputStream: InputStream
-            try {
-                inputStream = connection.getInputStream()
-            } catch (e: Exception) {
-                loading = false
-                dlFailed = true
-                return@launch
+            for (ext in listOf("jpg", "webp")) {
+                val inputStream = try {
+                    val connection = URL("https://fortnite.gg/maps/$mapNumber/0/0/0.$ext").openConnection()
+                    connection.connect()
+                    connection.getInputStream()
+                } catch (e: Exception) {
+                    null
+                }
+                if (inputStream != null) {
+                    val bitmap = loadImageBitmap(inputStream)
+                    onDownloaded(bitmap)
+                    loading = false
+                    return@launch
+                }
             }
-            val bitmap = loadImageBitmap(inputStream)
-            onDownloaded(bitmap)
             loading = false
+            dlFailed = true
         }
     }
 
@@ -122,7 +156,7 @@ fun MainScreen() {
         selectedMapPreview = null
         dlFailed = false
         loading = true
-        val mapPreviewStream = object {}::class.java.classLoader.getResourceAsStream("maps/$debouncedVersion.jpg")
+        val mapPreviewStream = bundledMapPreviewStream(debouncedVersion)
         if (mapPreviewStream != null) {
             selectedMapPreview = loadImageBitmap(mapPreviewStream)
             loading = false
@@ -145,7 +179,7 @@ fun MainScreen() {
         Sidebar(
             updateCallback = { map ->
                 version = map.nameWithoutExtension
-                val mapPreviewStream = object {}::class.java.classLoader.getResourceAsStream("maps/$version.jpg")
+                val mapPreviewStream = bundledMapPreviewStream(version)
                 if (mapPreviewStream != null) {
                     selectedMapPreview = loadImageBitmap(mapPreviewStream)
                 } else {
@@ -180,6 +214,75 @@ fun MainScreen() {
                         enabled = !isDownloading,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    if (recentVersions.isNotEmpty()) {
+                        FlowRow(
+                            modifier = Modifier.padding(top = 4.dp).fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            recentVersions.forEach { entry ->
+                                OutlinedButton(
+                                    onClick = { version = entry.version },
+                                    enabled = !isDownloading,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        entry.version,
+                                        style = MaterialTheme.typography.caption
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = {
+                                scope.launch(Dispatchers.IO) {
+                                    isScanningVersions = true
+                                    scanMessage = "Starting scan..."
+                                    scannedVersions = emptyList()
+                                    val latestKnown = recentVersions.firstOrNull()?.version ?: "0.0"
+                                    val found = VersionScanner.scanForNewVersions(
+                                        latestKnown,
+                                        onProgress = { checkingVersion, checked ->
+                                            scanMessage = "Checking $checkingVersion... ($checked checked)"
+                                        },
+                                        onFound = { result ->
+                                            scannedVersions = (scannedVersions + result).sortedBy { it.version }
+                                        }
+                                    )
+                                    scanMessage = if (found.isEmpty()) "No new versions found after $latestKnown" else "Scan complete"
+                                    if (found.isNotEmpty()) {
+                                        val bundledEntries = bundledVersions.map { VersionScanner.ScanResult(it) }
+                                        recentVersions = (bundledEntries + found)
+                                            .distinctBy { it.version }
+                                            .sortedByDescending { it.version }
+                                            .take(5)
+                                        saveRecentVersions(recentVersions)
+                                    }
+                                    isScanningVersions = false
+                                }
+                            },
+                            enabled = !isScanningVersions && !isDownloading,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            if (isScanningVersions) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colors.onPrimary
+                                )
+                            } else {
+                                Text("Scan for new maps", style = MaterialTheme.typography.caption)
+                            }
+                        }
+                        scanMessage?.let {
+                            Text(it, style = MaterialTheme.typography.caption, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
                     Row(modifier = Modifier.padding(top = 8.dp)) {
                         Button(
                             onClick = {
@@ -187,6 +290,16 @@ fun MainScreen() {
                                     isDownloading = true
                                     val downloader = FNGGDownloader(version)
                                     progressIsInderteminate = true
+                                    progressPercentage = 0f
+                                    status = "Detecting map format..."
+                                    try {
+                                        downloader.detectScheme()
+                                    } catch (e: Exception) {
+                                        status = "Failed: ${e.message}"
+                                        isDownloading = false
+                                        return@launch
+                                    }
+                                    if (!isActive) return@launch
                                     progressPercentage = 0f
                                     status = "Downloading images..."
                                     downloader.createBaseDir()
@@ -376,6 +489,13 @@ fun MainScreen() {
 
 fun loadImageBitmap(inputStream: InputStream): ImageBitmap {
     return inputStream.buffered().use(::loadImageBitmap)
+}
+
+// Bundled preview thumbnails are jpg for legacy versions, webp for newer ones - try both.
+fun bundledMapPreviewStream(version: String): InputStream? {
+    val classLoader = object {}::class.java.classLoader
+    return classLoader.getResourceAsStream("maps/$version.jpg")
+        ?: classLoader.getResourceAsStream("maps/$version.webp")
 }
 
 fun main() = application {

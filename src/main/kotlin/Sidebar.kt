@@ -4,6 +4,7 @@ import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,14 +32,16 @@ fun Sidebar(
             val mapNames = mapsListStream.bufferedReader().readLines()
             mapNameCache.addAll(mapNames)
             println("Loaded ${mapNameCache.size} maps")
-            // select last map by default
-            if (mapNameCache.isNotEmpty()) {
-                val lastMap = mapNameCache.last()
-                val lastMapFile = File("maps/$lastMap")
-                updateCallback(lastMapFile)
-            }
         } else {
             println("maps_list.txt not found")
+        }
+    }
+
+    // select last map by default, once, as a proper composition side effect
+    LaunchedEffect(Unit) {
+        if (mapNameCache.isNotEmpty()) {
+            val lastMap = mapNameCache.last()
+            updateCallback(File("maps/$lastMap"))
         }
     }
 
@@ -55,15 +58,19 @@ fun Sidebar(
         // for each map in mapnamecache, create a preview
         mapNameCache.forEach { mapName ->
             val mapFile = File("maps/$mapName")
-            val mapPreview = mapPreviews.getOrPut(mapName) {
+            // getOrPut alone re-runs the loader every recomposition for a failed lookup, since
+            // it treats a cached null the same as "not cached yet". containsKey distinguishes
+            // the two so a missing thumbnail is only logged and attempted once.
+            if (!mapPreviews.containsKey(mapName)) {
                 val mapPreviewStream = object {}::class.java.classLoader.getResourceAsStream("maps/$mapName")
-                if (mapPreviewStream != null) {
+                mapPreviews[mapName] = if (mapPreviewStream != null) {
                     loadImageBitmap(mapPreviewStream)
                 } else {
                     println("Failed to load image: $mapName")
                     null
                 }
             }
+            val mapPreview = mapPreviews[mapName]
             if (mapPreview != null) {
                 Button(
                     onClick = {
@@ -77,11 +84,11 @@ fun Sidebar(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Image(
                             bitmap = mapPreview,
-                            contentDescription = mapName.removeSuffix(".jpg"),
+                            contentDescription = mapFile.nameWithoutExtension,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(mapName.removeSuffix(".jpg"))
+                        Text(mapFile.nameWithoutExtension)
                     }
                 }
             }

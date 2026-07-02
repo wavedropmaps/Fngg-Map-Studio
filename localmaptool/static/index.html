@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FNGG Local Map Tool</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+<style>
+  html, body { margin: 0; height: 100%; font-family: sans-serif; background: #2f3136; color: #eee; }
+  #map { position: absolute; top: 48px; left: 0; right: 0; bottom: 0; background: #2f3136; }
+  #map .leaflet-container { background: #2f3136; }
+  #toolbar {
+    height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    background: #1c1c1c; border-bottom: 1px solid #333; box-sizing: border-box;
+  }
+  #toolbar select, #toolbar button, #toolbar input {
+    background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 4px;
+    padding: 4px 8px; font-size: 13px;
+  }
+  #toolbar button:hover { background: #3a3a3a; cursor: pointer; }
+  #status { margin-left: auto; font-size: 12px; color: #999; }
+  #importPanel, #migratePanel {
+    position: absolute; top: 56px; right: 12px; width: 340px; max-height: 80%;
+    overflow: auto; background: #1c1c1c; border: 1px solid #444; border-radius: 6px;
+    padding: 12px; display: none; z-index: 1000;
+  }
+  #importPanel textarea { width: 100%; height: 120px; box-sizing: border-box; }
+  #importPanel.open, #migratePanel.open { display: block; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <label>Version: <select id="versionSelect"></select></label>
+  <label>Drawing: <select id="drawingSelect"><option value="">(new)</option></select></label>
+  <input id="drawingName" placeholder="drawing name" style="width:120px" />
+  <button id="saveBtn">Save</button>
+  <button id="renameBtn">Rename</button>
+  <button id="deleteBtn">Delete</button>
+  <button id="importBtn">Import Drawing Link...</button>
+  <button id="migrateBtn">Migrate to Version...</button>
+  <span id="status"></span>
+</div>
+
+<div id="map"></div>
+
+<div id="importPanel">
+  <h3 style="margin-top:0">Import fortnite.gg Drawing</h3>
+  <p style="font-size:12px;color:#aaa">
+    Paste a fortnite.gg map link (e.g. https://fortnite.gg/?d=...) and fetch it directly,
+    or paste raw drawing JSON below.
+  </p>
+  <p>
+    <input id="importUrl" placeholder="https://fortnite.gg/?d=..." style="width:70%" />
+    <button id="importFetchBtn">Fetch</button>
+  </p>
+  <p style="font-size:12px;color:#666">
+    Fallback: drag this bookmarklet, open the fortnite.gg page, click it, then paste JSON below.
+    <br><a id="bookmarklet" href="#" style="color:#6cf">FNGG: Copy Drawing</a>
+  </p>
+  <textarea id="importText" placeholder="Paste window.Drawing JSON here"></textarea>
+  <p>
+    <label>Target version: <select id="importVersion"></select></label>
+  </p>
+  <button id="importConfirm">Convert &amp; Load</button>
+  <button id="importClose">Close</button>
+</div>
+
+<div id="migratePanel">
+  <h3 style="margin-top:0">Migrate Drawing</h3>
+  <p style="font-size:12px;color:#aaa">
+    Drag markers on the map to their new position, then save as a new drawing on the
+    target version. The original drawing is left untouched.
+  </p>
+  <p>Target version: <select id="migrateVersion"></select></p>
+  <p>New name: <input id="migrateName" placeholder="new drawing name" /></p>
+  <button id="migrateConfirm">Save Migrated Copy</button>
+  <button id="migrateClose">Close</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="app.js?v=4"></script>
+</body>
+</html>
