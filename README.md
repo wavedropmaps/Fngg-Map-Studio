@@ -36,9 +36,9 @@ on top:
   marker to its new position by eye (no automatic image alignment, since POIs get redesigned
   between versions).
 
-See [`HANDOFF_local_map_tool.md`](HANDOFF_local_map_tool.md) for the full design brief, and
-[`HANDOFF_camofox_browser_automation.md`](HANDOFF_camofox_browser_automation.md) for the
-in-progress work on automating drawing-link import via headless browser automation.
+Drawing-link import works via a plain HTTP `GET` that regex-extracts the inline
+`window.Drawing` JSON fortnite.gg renders server-side into the page HTML — no headless browser
+needed (see [`fetch_fgg_drawing()`](localmaptool/server.py)).
 
 ## Requirements
 
