@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "localmaptool",
+      "name": "fngg-map-studio",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["localmaptool/server.py"],
+      "runtimeArgs": ["main.py", "--no-ui"],
       "port": 8765
     }
   ]
