@@ -163,6 +163,9 @@ def version_info(version: str, refresh: bool = False) -> dict:
         "bytes": size,
         "has_final_image": final_image(version).is_file(),
         "has_pyramid": (pyramid_dir(version) / ".done").is_file(),
+        # Lets the UI open on a version that actually has drawings. Defaulting to
+        # the newest version showed an empty list, which reads as "broken".
+        "drawings": len(list_drawings(key)),
     }
     _info_cache[key] = info
     return info

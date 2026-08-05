@@ -29,12 +29,21 @@
     } catch (e) { /* keep the 1920x1080 default */ }
 
     let versions = [];
+    let detail = [];
     try {
       versions = (await (await fetch('/api/versions')).json()).versions || [];
+      detail = (await (await fetch('/api/versions/detail')).json()).versions || [];
     } catch (e) {
       setStatus('Server unreachable', true);
       return;
     }
+    // Open on a version that actually holds drawings. The newest version is
+    // usually a fresh download with none, so defaulting to it looks broken.
+    const withDrawings = detail.filter((d) => (d.drawings || 0) > 0);
+    const best = withDrawings.length
+      ? withDrawings[withDrawings.length - 1].version
+      : versions[versions.length - 1];
+
     for (const id of ['fnggFrom', 'fnggVersion']) {
       const sel = $(id);
       const keep = sel.value;
@@ -45,7 +54,7 @@
         sel.appendChild(o);
       }
       if (keep && versions.includes(keep)) sel.value = keep;
-      else if (versions.length) sel.value = versions[versions.length - 1];
+      else if (versions.length) sel.value = best;
     }
     await fillDrawings();
   }

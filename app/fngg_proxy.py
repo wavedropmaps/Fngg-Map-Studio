@@ -100,11 +100,33 @@ _INJECT = """
 """
 
 
+def is_fngg_url(url: str) -> bool:
+    """True only for https://fortnite.gg or a *.fortnite.gg subdomain.
+
+    A plain endswith("fortnite.gg") also accepts evilfortnite.gg, and matching on
+    netloc rather than hostname trips over userinfo and ports.
+    """
+    try:
+        p = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    if p.scheme not in ("http", "https"):
+        return False
+    host = (p.hostname or "").lower()
+    return host == "fortnite.gg" or host.endswith(".fortnite.gg")
+
+
 def build_page(source_url: str, drawing: dict, tile_base: str) -> bytes:
     """Fetch an fn.gg map page and rewrite it to use our drawing and tiles.
 
     tile_base is an absolute path on THIS server, e.g. "/tiles/v38.00".
     """
+    # Hard gate. Without it this is an arbitrary fetcher: file:// reads local
+    # files straight back to the caller, and any http(s) URL turns the app into
+    # an open proxy and an SSRF pivot onto the user's own network.
+    if not is_fngg_url(source_url):
+        raise ValueError("source must be an http(s) fortnite.gg URL")
+
     req = urllib.request.Request(source_url, headers={
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml",
@@ -113,8 +135,13 @@ def build_page(source_url: str, drawing: dict, tile_base: str) -> bytes:
     with urllib.request.urlopen(req, timeout=25) as r:
         html = r.read().decode("utf-8", errors="replace")
 
-    inject = _INJECT.format(fngg=FNGG, drawing=json.dumps(to_fngg_format(drawing)),
-                            local=tile_base)
+    # json.dumps does NOT escape "</", so a tooltip containing "</script>" closes
+    # this block early and everything after it becomes live markup on our own
+    # origin. Tooltips come from imported fortnite.gg links, i.e. from whoever
+    # shared the link -- untrusted. Escaping the slash keeps the JSON identical
+    # to the parser while making the sequence impossible to emit.
+    payload = json.dumps(to_fngg_format(drawing)).replace("</", "<\\/")
+    inject = _INJECT.format(fngg=FNGG, drawing=payload, local=tile_base)
 
     # Land the injection immediately after <head> so it precedes every fn.gg
     # script -- including the inline `Drawing = {...}` we need to override.

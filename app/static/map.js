@@ -123,6 +123,7 @@ async function loadDrawingList(version) {
     opt.textContent = name;
     sel.appendChild(opt);
   }
+  return drawings;   // callers use this to check for an existing name
 }
 
 function serializeDrawing() {
@@ -252,15 +253,29 @@ function wireToolbar() {
   document.getElementById("renameBtn").addEventListener("click", async () => {
     const oldName = document.getElementById("drawingSelect").value;
     if (!oldName) return setStatus("Select a saved drawing to rename");
-    const newName = prompt("New name:", oldName);
+    const newName = (prompt("New name:", oldName) || "").trim();
     if (!newName || newName === oldName) return;
+
+    // Rename is copy-then-delete. On Windows the filesystem is case-insensitive,
+    // so "foo" -> "Foo" writes and then deletes THE SAME FILE and the drawing is
+    // destroyed while the UI reports success. Skip the delete in that case.
+    const sameFile = newName.toLowerCase() === oldName.toLowerCase();
+
+    const existing = await loadDrawingList(state.version);
+    if (!sameFile && (existing || []).includes(newName) &&
+        !confirm(`"${newName}" already exists. Overwrite it?`)) {
+      return;
+    }
+
     const data = await fetchJSON(`/api/drawings/${state.version}/${encodeURIComponent(oldName)}`);
     await fetchJSON(`/api/drawings/${state.version}/${encodeURIComponent(newName)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    await fetchJSON(`/api/drawings/${state.version}/${encodeURIComponent(oldName)}`, { method: "DELETE" });
+    if (!sameFile) {
+      await fetchJSON(`/api/drawings/${state.version}/${encodeURIComponent(oldName)}`, { method: "DELETE" });
+    }
     await loadDrawingList(state.version);
     document.getElementById("drawingSelect").value = newName;
     document.getElementById("drawingName").value = newName;
@@ -361,7 +376,16 @@ async function main() {
     setStatus("No archived versions found in ~/FNGGMapDownloader");
     return;
   }
-  state.version = versions[versions.length - 1];
+  // Prefer a version that actually holds drawings. The newest is usually a fresh
+  // download with none, so defaulting to it opens on an empty list.
+  let preferred = versions[versions.length - 1];
+  try {
+    const { versions: detail } = await fetchJSON("/api/versions/detail");
+    const withDrawings = (detail || []).filter((d) => (d.drawings || 0) > 0);
+    if (withDrawings.length) preferred = withDrawings[withDrawings.length - 1].version;
+  } catch (e) { /* fall back to newest */ }
+
+  state.version = preferred;
   document.getElementById("versionSelect").value = state.version;
   setTileLayer(state.version);
   await loadDrawingList(state.version);

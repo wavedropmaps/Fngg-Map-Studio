@@ -45,16 +45,33 @@
   }
 
   // Promise-based so a queue of downloads can await each one in turn.
+  // Each poll gets its OWN interval handle rather than sharing one module-level
+  // slot: starting a second job used to clearInterval the first, whose promise
+  // then never settled, so a running download queue silently stalled forever.
   function pollJob(id, onDone) {
     activeJob = id;
-    if (pollTimer) clearInterval(pollTimer);
     return new Promise((resolve) => {
-      pollTimer = setInterval(async () => {
+      let timer = null;
+      let misses = 0;
+      const finish = (j) => { clearInterval(timer); if (pollTimer === timer) pollTimer = null; resolve(j); };
+      timer = setInterval(async () => {
         let j;
         try {
           j = await (await fetch('/api/job/' + id)).json();
         } catch (e) { return; }      // transient; next tick retries
-        if (j.error && j.state !== 'error') return;
+
+        // An unknown job id returns {error} with NO state — e.g. after a server
+        // restart. Without this the tab polls forever and the buttons stay dead.
+        if (j.error && !j.state) {
+          if (++misses >= 5) {
+            stopPolling();
+            resetProgressBar();
+            $('progressText').textContent = 'Lost track of that job (did the server restart?).';
+            return finish({ state: 'error', error: j.error });
+          }
+          return;
+        }
+        misses = 0;
 
         setProgress(j.done || 0, j.total || 0, j.note || '');
         if (j.kind === 'scan' && j.found && j.found.length) {
@@ -72,8 +89,9 @@
           onDone && onDone(j);
         }
         refreshVersionTable();
-        resolve(j);
+        finish(j);
       }, 700);
+      pollTimer = timer;
     });
   }
 

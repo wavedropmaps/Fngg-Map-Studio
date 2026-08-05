@@ -42,7 +42,16 @@ def _fetch(url: str) -> bytes | None:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=TILE_TIMEOUT) as r:
-                return r.read()
+                ctype = (r.headers.get("Content-Type") or "").lower()
+                data = r.read()
+            # A rate-limit or error page can come back as 200 text/html. Storing
+            # that as a tile counts as success, so the map ends up with holes
+            # that a re-download will never repair (the file exists, so it's
+            # skipped). Only accept something that is actually an image.
+            if not ctype.startswith("image/"):
+                logger.warning("tile %s returned %s, not an image", url, ctype or "no content-type")
+                return None
+            return data
         except Exception:
             if attempt == RETRIES - 1:
                 return None
@@ -85,6 +94,19 @@ def download_version(version: str, *, scheme: TileScheme | None = None,
             return archive.images_dir(version) / str(x) / f"{y}.{ext}"
         return archive.pyramid_dir(version, z) / f"{x}_{y}.jpg"
 
+    def _tick(done, z):
+        """Progress + cancel polling, on EVERY tile including skipped ones.
+
+        These used to sit only on the fetch path. Re-running a mostly-complete
+        version is almost all skips, so the progress bar never moved and the
+        cancel check was rarely reached -- pressing Cancel appeared to do
+        nothing and the job still finished "successfully".
+        """
+        if on_progress and done % 25 == 0:
+            on_progress(done, total, f"z{z}")
+        if should_cancel and done % 50 == 0 and should_cancel():
+            cancel_flag.set()
+
     def one(job):
         if cancel_flag.is_set():
             return
@@ -93,23 +115,33 @@ def download_version(version: str, *, scheme: TileScheme | None = None,
         if dest.is_file() and dest.stat().st_size > 0:
             with lock:
                 state["skip"] += 1; state["done"] += 1
+                done = state["done"]
+            _tick(done, z)
             return
         # Lower zooms are fetched in this version's own extension too; fn.gg
         # serves every level in the same format for a given version.
         data = _fetch(tile_url(version, z, x, y, ext))
+        if data:
+            # Write to a temp file and rename: a kill or a full disk mid-write
+            # otherwise leaves a truncated tile with size > 0, which the skip
+            # check above then treats as complete forever. Rename is atomic, so
+            # a tile is either absent or whole.
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_suffix(dest.suffix + ".part")
+            try:
+                tmp.write_bytes(data)
+                tmp.replace(dest)
+            except OSError:
+                tmp.unlink(missing_ok=True)
+                data = None
         with lock:
             if data:
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(data)
                 state["ok"] += 1
             else:
                 state["fail"] += 1
             state["done"] += 1
             done = state["done"]
-        if on_progress and done % 25 == 0:
-            on_progress(done, total, f"z{z}")
-        if should_cancel and done % 50 == 0 and should_cancel():
-            cancel_flag.set()
+        _tick(done, z)
 
     with cf.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         list(ex.map(one, jobs))
