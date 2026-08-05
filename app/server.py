@@ -73,9 +73,18 @@ def _reject_drawing_name(name: str) -> str | None:
     return None
 
 
+MAX_JOBS = 50
+
+
 def _new_job(kind: str) -> str:
     jid = uuid.uuid4().hex[:12]
     with _jobs_lock:
+        # Nothing ever removed finished jobs, so a long session grew this
+        # forever. Keep the most recent; the UI only polls the live one.
+        if len(_jobs) >= MAX_JOBS:
+            for old in [k for k, v in list(_jobs.items())
+                        if v.get("state") != "running"][:len(_jobs) - MAX_JOBS + 1]:
+                _jobs.pop(old, None)
         _jobs[jid] = {"id": jid, "kind": kind, "state": "running", "done": 0,
                       "total": 0, "note": "", "result": None, "error": None,
                       "cancel": False, "found": []}
@@ -91,12 +100,51 @@ def _update(jid, **kw):
 def _job(jid):
     with _jobs_lock:
         j = _jobs.get(jid)
-        return dict(j) if j else None
+        if not j:
+            return None
+        j = dict(j)
+        # dict() is shallow, so "found" would still be the list the scan thread
+        # is appending to while json.dumps walks it.
+        j["found"] = list(j.get("found") or [])
+        return j
 
 
 def _cancelled(jid) -> bool:
     with _jobs_lock:
         return bool(_jobs.get(jid, {}).get("cancel"))
+
+
+def _extract_drawing_json(html: str) -> dict:
+    """Pull the `Drawing = {...}` object out of fn.gg's inline script.
+
+    Scanning braces rather than regexing to the first "};" — a tooltip containing
+    that sequence would otherwise truncate the JSON mid-object and surface as a
+    confusing parse error. Quote/escape aware so braces inside strings don't count.
+    """
+    m = re.search(r"(?:window\.)?Drawing\s*=\s*\{", html)
+    if not m:
+        raise ValueError("No Drawing data found on that page")
+    start = m.end() - 1
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(html)):
+        c = html[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(html[start:i + 1])
+    raise ValueError("Drawing data on that page is truncated")
 
 
 def fetch_fgg_drawing(fgg_url: str) -> dict:
@@ -108,10 +156,7 @@ def fetch_fgg_drawing(fgg_url: str) -> dict:
     req = urllib.request.Request(fgg_url, headers={"User-Agent": "Mozilla/5.0 (compatible; FNGGMapStudio/1.0)"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         html = resp.read().decode("utf-8", errors="replace")
-    m = DRAWING_RE.search(html)
-    if not m:
-        raise ValueError("No Drawing data found on that page")
-    return json.loads(m.group(1))
+    return _extract_drawing_json(html)
 
 
 def _run_scan(jid: str, after: str):
@@ -209,8 +254,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        # Not "immutable": a tile re-downloaded to repair a corrupt one would
+        # never be picked up without a hard refresh. An hour is plenty for a
+        # local server while still letting repairs surface on their own.
         self.send_header("Cache-Control",
-                         "public, max-age=31536000, immutable" if immutable else "no-cache")
+                         "public, max-age=3600" if immutable else "no-cache")
         self.end_headers()
         self.wfile.write(data)
 
@@ -521,8 +569,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404, "Drawing not found")
 
 
-def serve(port: int = PORT):
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+def serve(port: int = PORT, fallback: bool = True):
+    """Bind the server, stepping to an OS-assigned port if `port` is taken.
+
+    The caller's "is this port free?" probe is inherently racy — it closes the
+    socket before we bind — so the bind itself has to handle the collision.
+    """
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError:
+        if not fallback:
+            raise
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        port = httpd.server_address[1]
+        print(f"Port was busy — using {port} instead.")
     print(f"FNGG Map Studio serving on http://127.0.0.1:{port}")
     print(f"Archive root : {archive.ARCHIVE_ROOT}")
     print(f"Versions     : {archive.list_versions()}")

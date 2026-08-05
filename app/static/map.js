@@ -35,15 +35,34 @@ function fnggMarkerIcon(color) {
   });
 }
 
+// Per-version native zoom, filled from /api/versions/detail. Most versions are 7,
+// but fn.gg can ship one that only covers a lower zoom — assuming 7 for those
+// leaves the map blank at its real zoom and crams a few tiles into the corner.
+const nativeZoomByVersion = {};
+
+function nativeZoomFor(version) {
+  return nativeZoomByVersion[version] ?? NATIVE_ZOOM;
+}
+
 function tileLayerFor(version) {
+  const nz = nativeZoomFor(version);
   return L.tileLayer(`/tiles/${version}/{z}/{x}/{y}.img`, {
     minZoom: 0,
-    maxZoom: NATIVE_ZOOM,
-    maxNativeZoom: NATIVE_ZOOM,
+    maxZoom: NATIVE_ZOOM,   // the map can zoom past native; Leaflet upscales
+    maxNativeZoom: nz,
     noWrap: true,
     bounds: WORLD_BOUNDS,
     tileSize: 256,
   });
+}
+
+async function loadNativeZooms() {
+  try {
+    const { versions } = await fetchJSON("/api/versions/detail");
+    for (const v of versions || []) {
+      if (v.native_zoom) nativeZoomByVersion[v.version] = v.native_zoom;
+    }
+  } catch (e) { /* fall back to the default */ }
 }
 
 function initMap() {
@@ -381,6 +400,9 @@ async function main() {
   let preferred = versions[versions.length - 1];
   try {
     const { versions: detail } = await fetchJSON("/api/versions/detail");
+    for (const v of detail || []) {
+      if (v.native_zoom) nativeZoomByVersion[v.version] = v.native_zoom;
+    }
     const withDrawings = (detail || []).filter((d) => (d.drawings || 0) > 0);
     if (withDrawings.length) preferred = withDrawings[withDrawings.length - 1].version;
   } catch (e) { /* fall back to newest */ }

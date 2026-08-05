@@ -6,6 +6,7 @@ versions and saved drawings are picked up on first run.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -16,7 +17,10 @@ DRAWINGS_ROOT = ARCHIVE_ROOT / "drawings"
 VERSION_DIR_RE = re.compile(r"^v[\d.]+$")
 TILE_EXTS = ("webp", "jpg", "png")
 
-NATIVE_ZOOM = 7
+# Historical default. Real value is per-version via load_scheme(); this is
+# only the fallback for an archive that predates scheme.json.
+DEFAULT_NATIVE_ZOOM = 7
+NATIVE_ZOOM = DEFAULT_NATIVE_ZOOM   # back-compat alias
 TILE_SIZE = 256
 
 
@@ -166,9 +170,79 @@ def version_info(version: str, refresh: bool = False) -> dict:
         # Lets the UI open on a version that actually has drawings. Defaulting to
         # the newest version showed an empty list, which reads as "broken".
         "drawings": len(list_drawings(key)),
+        # The frontend needs this for maxNativeZoom; hardcoding 7 there breaks
+        # any version that only covers a lower zoom.
+        "native_zoom": load_scheme(version)["zoom"],
     }
     _info_cache[key] = info
     return info
+
+
+def scheme_file(version: str) -> Path:
+    return version_dir(version) / "scheme.json"
+
+
+_scheme_cache: dict[str, dict] = {}
+
+
+def save_scheme(version: str, zoom: int, grid: int, ext: str) -> None:
+    """Record the tile scheme a version was downloaded with."""
+    p = scheme_file(version)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"zoom": zoom, "grid": grid, "ext": ext}, indent=2), encoding="utf-8")
+    _scheme_cache.pop(version_dir(version).name, None)
+
+
+def load_scheme(version: str) -> dict:
+    """The zoom/grid/ext this version actually uses.
+
+    NOT a constant: detect_tile_scheme walks zoom 7 -> 0 precisely because a
+    version may only cover a lower zoom. Assuming 7 everywhere meant such a
+    version's tiles were written to images/ and then served as if they were the
+    128x128 grid -- blank at its real zoom, and a handful of tiles crammed into
+    the corner at z7.
+
+    Falls back to inferring from disk (archives predating scheme.json), then to
+    the historical 7/128/jpg default.
+    """
+    key = version_dir(version).name
+    if key in _scheme_cache:
+        return _scheme_cache[key]
+
+    sc = None
+    p = scheme_file(version)
+    if p.is_file():
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            if {"zoom", "grid", "ext"} <= d.keys():
+                sc = {"zoom": int(d["zoom"]), "grid": int(d["grid"]), "ext": str(d["ext"])}
+        except Exception:
+            sc = None
+
+    if sc is None:
+        imgs = images_dir(version)
+        grid = 0
+        ext = "jpg"
+        if imgs.is_dir():
+            cols = [e for e in imgs.iterdir() if e.is_dir() and e.name.isdigit()]
+            grid = len(cols)
+            for c in cols[:1]:
+                for f in c.iterdir():
+                    if f.suffix.lstrip(".") in TILE_EXTS:
+                        ext = f.suffix.lstrip(".")
+                        break
+        zoom = max(0, (grid - 1).bit_length()) if grid > 1 else DEFAULT_NATIVE_ZOOM
+        if grid <= 1:
+            grid = 1 << DEFAULT_NATIVE_ZOOM
+            zoom = DEFAULT_NATIVE_ZOOM
+        sc = {"zoom": zoom, "grid": grid, "ext": ext}
+
+    _scheme_cache[key] = sc
+    return sc
+
+
+def native_zoom(version: str) -> int:
+    return load_scheme(version)["zoom"]
 
 
 def find_native_tile(version: str, x: int, y: int) -> Path | None:
@@ -184,9 +258,10 @@ def find_native_tile(version: str, x: int, y: int) -> Path | None:
 
 def find_tile(version: str, z: int, x: int, y: int) -> Path | None:
     """Native zoom comes from images/; everything below from the pyramid cache."""
-    if z == NATIVE_ZOOM:
+    nz = native_zoom(version)
+    if z == nz:
         return find_native_tile(version, x, y)
-    if not (0 <= z < NATIVE_ZOOM):
+    if not (0 <= z < nz):
         return None
     n = 2 ** z
     if not (0 <= x < n and 0 <= y < n):

@@ -48,11 +48,12 @@ def main() -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    port = _free_port(args.port)
-    if port != args.port:
-        print(f"Port {args.port} was busy — using {port} instead.")
-
-    httpd = serve(port)
+    # serve() falls back to an OS-assigned port if this one is taken, so read the
+    # port back from the bound socket rather than trusting the probe — between
+    # _free_port() closing its test socket and serve() binding, anything could
+    # have grabbed it.
+    httpd = serve(_free_port(args.port))
+    port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{port}"
 

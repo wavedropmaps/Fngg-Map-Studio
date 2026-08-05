@@ -37,11 +37,11 @@ class Cancelled(Exception):
     """Raised when the caller's cancel callback returns True mid-download."""
 
 
-def _fetch(url: str) -> bytes | None:
-    for attempt in range(RETRIES):
+def _fetch(url: str, retries: int = RETRIES, timeout: int = TILE_TIMEOUT) -> bytes | None:
+    for attempt in range(retries):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(req, timeout=TILE_TIMEOUT) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 ctype = (r.headers.get("Content-Type") or "").lower()
                 data = r.read()
             # A rate-limit or error page can come back as 200 text/html. Storing
@@ -53,7 +53,7 @@ def _fetch(url: str) -> bytes | None:
                 return None
             return data
         except Exception:
-            if attempt == RETRIES - 1:
+            if attempt == retries - 1:
                 return None
     return None
 
@@ -77,6 +77,10 @@ def download_version(version: str, *, scheme: TileScheme | None = None,
     ext = scheme.extension
     native_z = scheme.zoom
     grid = scheme.grid_size
+
+    # Persist what this version actually uses. Without it every consumer has to
+    # assume 7/128, which silently breaks any version that caps out lower.
+    archive.save_scheme(version, native_z, grid, ext)
 
     jobs: list[tuple[int, int, int]] = [(native_z, x, y) for x in range(grid) for y in range(grid)]
     if include_pyramid:
@@ -183,8 +187,11 @@ def fetch_preview(version: str) -> Path | None:
     if existing:
         return existing
 
+    # Bounded on purpose: this runs inside a request. The normal retry policy is
+    # 3 x 30 s x 2 extensions = up to 3 minutes of a browser tab hanging on a
+    # missing thumbnail when fn.gg is unreachable.
     for ext in ("jpg", "webp"):
-        data = _fetch(tile_url(version, 0, 0, 0, ext))
+        data = _fetch(tile_url(version, 0, 0, 0, ext), retries=1, timeout=6)
         if data:
             archive.PREVIEW_CACHE.mkdir(parents=True, exist_ok=True)
             out = archive.PREVIEW_CACHE / f"{version}.{ext}"
