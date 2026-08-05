@@ -10,6 +10,11 @@ jobs:
   build:
     runs-on: windows-latest
 
+    # GITHUB_TOKEN defaults to read-only, so publishing a release fails with
+    # "Resource not accessible by integration" even though the build succeeded.
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -69,7 +74,7 @@ jobs:
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: dist/FNGGMapStudio.exe
           generate_release_notes: true
