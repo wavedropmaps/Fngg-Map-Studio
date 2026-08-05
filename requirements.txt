@@ -1,0 +1,9 @@
+# Stitching the single big map image ("Open HQ map").
+Pillow>=10.0
+
+# Native desktop window. Optional: without it the app falls back to opening
+# the default browser, which works fine but looks like a web page.
+pywebview>=4.4
+
+# Only needed to build the standalone .exe (see build_exe.bat).
+# pyinstaller>=6.0

@@ -1,124 +1,124 @@
-# FNGG Map Dumper
+# FNGG Map Studio
 
-FNGG Map Dumper is a desktop application for downloading and merging Fortnite map images from
-fortnite.gg. The application is built using Kotlin and Jetpack Compose for Desktop.
+Archive fortnite.gg map versions locally, and keep drop-map drawings pinned to
+the map version they were actually made on.
 
-The repo also includes a companion **Local Map Tool** — a Leaflet-based viewer and drawing tool
-that runs against the archives this app downloads, purpose-built to fix a bug in fortnite.gg's
-own drawing tool (see [Local Map Tool](#local-map-tool) below).
+fortnite.gg renders a saved drawing over **whatever the current map is**. A drop
+map drawn in November renders on today's island, in the wrong place, and no URL
+parameter changes that. This keeps every drawing tied to its version.
 
-## Features
+Python, no JDK, no build step to run it.
 
-### Desktop downloader (Kotlin/Compose)
+> Replaces the Kotlin/Compose downloader that previously lived in this repo. That
+> version is still in the history — `git checkout <commit> -- src/` to pull it back.
 
-- Download map images for a specified Fortnite map version and merge them into one high-quality image.
-- Supports both of fortnite.gg's tile schemes automatically:
-  - legacy full-res `.jpg` tiles (zoom 7, 128×128 grid)
-  - newer `.webp`-only tiles used by recent map versions, with automatic zoom/grid detection
-    (see [`VersionScanner.kt`](src/main/kotlin/VersionScanner.kt))
-- "Refresh" button scans fortnite.gg for map versions newer than the bundled list
-  ([`maps_list.txt`](src/main/resources/maps_list.txt)) and adds any it finds.
-- View and open downloaded maps directly from the application.
+## Running
 
-### Local Map Tool ([`localmaptool/`](localmaptool))
+```
+run.bat
+```
 
-A local web app (Python HTTP server + Leaflet frontend) that serves the map tiles this app has
-already archived to `~/FNGGMapDownloader/v{version}/images/`, and adds a versioned drawing layer
-on top:
+Installs dependencies on first run, then opens the app. Arguments pass through to
+`main.py`:
 
-- Marker, line/route, and rectangle drawing tools on top of the archived tiles for any downloaded version.
-- Every drawing set is saved tied to the exact map version it was made on (`~/FNGGMapDownloader/drawings/{version}/{name}.json`),
-  so markers never silently drift onto the wrong spot when the underlying map changes between
-  seasons — the one thing fortnite.gg's own drawing tool gets wrong.
-- Import existing fortnite.gg drawing links (`fortnite.gg/map?d=...`) via a bookmarklet that
-  copies the page's `window.Drawing` data for pasting into the tool.
-- Manual migration UI: carry a drawing set forward to a newer map version by dragging each
-  marker to its new position by eye (no automatic image alignment, since POIs get redesigned
-  between versions).
+| Flag | Effect |
+|---|---|
+| `--browser` | open in the default browser instead of a native window |
+| `--no-ui` | server only, no window (for debugging) |
+| `--port N` | listen on N instead of 8765 |
 
-Drawing-link import works via a plain HTTP `GET` that regex-extracts the inline
-`window.Drawing` JSON fortnite.gg renders server-side into the page HTML — no headless browser
-needed (see [`fetch_fgg_drawing()`](localmaptool/server.py)).
+A busy port is stepped over automatically rather than crashing. Without
+`pywebview` it falls back to the browser, so it still runs on a bare Python
+install.
 
-## Requirements
+## The three tabs
 
-- JDK 21 (auto-downloaded via the Gradle `foojay-resolver-convention` plugin if not already present)
-- Gradle (via the included `gradlew`/`gradlew.bat` wrapper)
-- Internet connection for downloading map images
-- Python 3 (only needed to run the Local Map Tool)
+**Maps** — download a map version (the tile scheme is detected automatically),
+scan fortnite.gg for versions newer than the ones you have, and see what's
+archived. Every known version shows a thumbnail of the island, because a version
+number alone tells you nothing about which map it is. Several can be queued at
+once.
 
-## Installation
+**Drawings** — your drawings rendered by **fortnite.gg's own map UI**, over
+whichever map version you archived. Their arrows, sprites and label styling; your
+data; the map you choose. Edits save back to your local files. Needs internet.
 
-1. Download the latest release from the [Releases](../../releases) page.
-2. Extract the downloaded ZIP file.
-3. Run `FNGG Map Dumper.exe` to launch the application.
+**Drawings (offline)** — the same drawings in a self-contained Leaflet viewer.
+Plainer, but works with no connection and doesn't care if fortnite.gg changes
+their site.
 
-## Usage
+Both drawing tabs share viewport presets (720p / 1080p / 2K / 4K) that lay the map
+out at real pixel dimensions and scale it to fit — matching the sizes the
+watermark bot renders at.
 
-### Downloader
+## Storage
 
-1. Launch the application (see [Running from source](#running-from-source) if not using a release build).
-2. Enter the map version you want to download, or click "Refresh" to scan for new versions.
-3. Click "Download" to start downloading and merging the map images.
-4. Once complete, open the map or the folder containing it directly from the app.
+```
+~/FNGGMapDownloader/
+  v38.01/
+    images/{x}/{y}.jpg       native zoom-7 tiles
+    _pyramid_cache/{z}/      lower zoom levels
+    finalImage.png           the whole map stitched into one file (optional)
+  drawings/v38.01/*.json     drawings, per map version
+  _previews/                 thumbnails fetched for versions not bundled
+  discovered_versions.txt    versions found by scanning
+```
 
-### Local Map Tool
+Unchanged from the Kotlin app, so an existing archive works with no migration.
 
-1. Download at least one map version with the desktop app first (the tool serves tiles from
-   the same `~/FNGGMapDownloader/v{version}/` archive).
-2. Run [`run_localmaptool.bat`](run_localmaptool.bat), or `python localmaptool/server.py` directly.
-3. It opens `http://127.0.0.1:8765` in your browser — pick a version, draw markers/lines/boxes,
-   and save.
+## Why some things are the way they are
 
-## Development
+**Zoom levels are downloaded, not generated.** fortnite.gg already renders every
+zoom level. The old app stitched one huge image and re-sliced it, holding a
+16k–32k px image in memory to produce tiles that already existed upstream.
+`finalImage.png` is still available on demand; nothing depends on it.
 
-### Prerequisites
+**Leaflet is vendored, not from a CDN.** The previous tool loaded it from unpkg,
+so the "offline" viewer quietly needed internet.
 
-- IntelliJ IDEA (recommended) or any other IDE that supports Kotlin and Gradle.
+**Scanning is slow and sequential on purpose.** A clean 404 is trusted at once,
+but timeouts and rate-limit responses are retried with backoff — treating a
+temporary block as "this version doesn't exist" silently hides real versions. The
+current major is swept in full: fn.gg's numbering is sparse (41.01 is followed by
+nothing until 41.20), and an early bail-out misses the tail.
 
-### Running from source
+**Version stats are cached.** Counting tiles and summing bytes means walking tens
+of thousands of files; done naively the Maps tab stalled for ~9 s every visit.
 
-The system JDK may not match the toolchain JDK 21 requirement. Use the provided run scripts,
-which pin `JAVA_HOME` to the Gradle-provisioned JDK 21 before invoking the wrapper:
+**The Drawings tab is a proxy, not an iframe.** fortnite.gg's page is fetched
+server-side and rewritten, because an iframe pointed at their origin can't be
+injected into, their HTTPS page can't load `http://127.0.0.1` tiles, and their
+inline `Drawing = {...}` runs before their map code — so anything injected after
+load is overwritten. Serving from our own origin solves all three. See
+[`app/fngg_proxy.py`](app/fngg_proxy.py).
 
-- Windows Command Prompt: `run.bat`
-- PowerShell: `run.ps1`
+## Bookmarklet
 
-Or open the project in IntelliJ IDEA, sync the Gradle project, and run from the IDE.
+[`docs/fngg-tile-swap.md`](docs/fngg-tile-swap.md) — view any fortnite.gg drawing
+link on an older map, straight in your browser, without this app.
 
-> **Note:** if your machine's default `java` is very new (e.g. JDK 25/26), Gradle 8.8's own
-> Kotlin-DSL script compiler can fail to even configure the build (`JavaVersion.parse` throws on
-> unrecognized version strings), independent of the JDK 21 toolchain the app itself compiles
-> against. Point `JAVA_HOME` at the pinned JDK described above (`run.bat`/`run.ps1` already do
-> this) rather than relying on whatever `java` resolves to on `PATH`.
+## Building a standalone .exe
 
-### Project Structure
+```
+build_exe.bat
+```
 
-- `src/main/kotlin`: Main application code —
-  [`Main.kt`](src/main/kotlin/Main.kt) (Compose UI),
-  [`FNGGDownloader.kt`](src/main/kotlin/FNGGDownloader.kt) (download/merge pipeline),
-  [`Sidebar.kt`](src/main/kotlin/Sidebar.kt) (map list/version UI),
-  [`VersionScanner.kt`](src/main/kotlin/VersionScanner.kt) (probes fortnite.gg for available
-  versions and tile schemes).
-- `src/main/resources`: Application resources — icons, bundled map preview images, and
-  `maps_list.txt` (the bundled list of known map versions).
-- `localmaptool/`: Local versioned map viewer + drawing tool (Python server + Leaflet frontend),
-  independent from the Kotlin app but reads its archived tile output.
-- `research/`: Notes/scratch work from investigating fortnite.gg's tile and drawing-link formats.
-- `build.gradle.kts` / `settings.gradle.kts`: Gradle build configuration.
+Produces `dist/FNGGMapStudio.exe`. CI does the same on a `v*` tag and smoke-tests
+the result before publishing a release.
 
-## Contributing
+## Layout
 
-Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
+```
+main.py               entry point, native window / browser, port selection
+app/archive.py        paths, version listing, tile lookup, cached stats
+app/scanner.py        version + tile-scheme probing
+app/downloader.py     tile download, optional stitch
+app/fngg_proxy.py     serves fortnite.gg's UI with our drawing and tiles
+app/server.py         HTTP API + background job runner
+app/static/           frontend
+research/             how fortnite.gg's map, tiles and drawings actually work
+```
 
-## License
+## Licence
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
-
-## Acknowledgements
-
-- [Jetpack Compose for Desktop](https://www.jetbrains.com/lp/compose/)
-- [Kotlin](https://kotlinlang.org/)
-- [Gradle](https://gradle.org/)
-- [Leaflet](https://leafletjs.com/)
-- [Fortnite.gg](https://fortnite.gg/)
+MIT — see [LICENSE](LICENSE). Not affiliated with Epic Games or fortnite.gg.

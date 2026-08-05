@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FNGG Map Studio</title>
+<!-- Vendored, not CDN: the app has to work with no internet once maps are downloaded. -->
+<link rel="stylesheet" href="/static/vendor/leaflet.css" />
+<link rel="stylesheet" href="/static/vendor/leaflet.draw.css" />
+<style>
+  html, body { margin: 0; height: 100%; font-family: sans-serif; background: #2f3136; color: #eee; }
+  button, select, input { font-family: inherit; }
+
+  /* ── shell ───────────────────────────────────────────────────────────── */
+  #tabbar {
+    height: 42px; display: flex; align-items: stretch; background: #171717;
+    border-bottom: 1px solid #333; box-sizing: border-box;
+  }
+  #tabbar .tab {
+    padding: 0 22px; display: flex; align-items: center; cursor: pointer;
+    background: none; border: none; color: #999; font-size: 14px; font-weight: 600;
+    border-bottom: 2px solid transparent;
+  }
+  #tabbar .tab:hover { color: #ddd; }
+  #tabbar .tab.active { color: #fce51e; border-bottom-color: #fce51e; }
+  #tabbar .spacer { flex: 1; }
+  #tabbar .brand { display: flex; align-items: center; padding: 0 16px; color: #666; font-size: 12px; }
+
+  .page { position: absolute; top: 42px; left: 0; right: 0; bottom: 0; display: none; }
+  .page.active { display: block; }
+
+  /* ── maps page ───────────────────────────────────────────────────────── */
+  #pageMaps { overflow: auto; padding: 22px; box-sizing: border-box; }
+  .panel {
+    background: #1c1c1c; border: 1px solid #333; border-radius: 8px;
+    padding: 16px 18px; margin-bottom: 18px; max-width: 900px;
+  }
+  .panel h2 { margin: 0 0 4px; font-size: 15px; }
+  .panel .hint { color: #888; font-size: 12px; margin: 0 0 14px; line-height: 1.5; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn {
+    background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 5px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer;
+  }
+  .btn:hover:not(:disabled) { background: #3a3a3a; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: #3a3a1c; border-color: #fce51e; color: #fce51e; }
+  .btn.danger  { border-color: #a33; color: #f88; }
+  input[type=text] {
+    background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 5px;
+    padding: 7px 10px; font-size: 13px;
+  }
+  label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #bbb; }
+
+  table.versions { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.versions th {
+    text-align: left; color: #888; font-weight: 600; padding: 6px 8px;
+    border-bottom: 1px solid #333; font-size: 12px;
+  }
+  table.versions td { padding: 7px 8px; border-bottom: 1px solid #262626; }
+  table.versions tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .pill.yes { background: #1c3a1c; color: #7de07d; }
+  .pill.no  { background: #3a1c1c; color: #e07d7d; }
+  /* Dotted underline so it's discoverable that these explain themselves on hover —
+     a bare title attribute gives no visual cue that there's anything to hover. */
+  .help { border-bottom: 1px dotted #666; cursor: help; }
+
+  /* Version picker: thumbnails of the island, like the old GUI's sidebar.
+     A version number alone tells you nothing about which map it is. */
+  .vgrid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 10px; max-height: 330px; overflow-y: auto; padding: 4px 2px;
+  }
+  .vcard {
+    background: #222; border: 2px solid #333; border-radius: 6px; padding: 6px;
+    cursor: pointer; text-align: center; position: relative;
+  }
+  .vcard:hover { border-color: #555; }
+  .vcard.sel { border-color: #fce51e; background: #2e2c18; }
+  .vcard img {
+    width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px;
+    background: #111; display: block;
+  }
+  .vcard .vlabel { font-size: 12px; font-weight: 600; margin-top: 5px; color: #ddd; }
+  .vcard.have .vlabel { color: #7de07d; }
+  .vcard .vtick {
+    position: absolute; top: 9px; right: 9px; background: #1c3a1c; color: #7de07d;
+    border-radius: 50%; width: 19px; height: 19px; line-height: 19px;
+    font-size: 12px; font-weight: 700;
+  }
+
+  #progressWrap { display: none; margin-top: 14px; }
+  #progressWrap.on { display: block; }
+  .bar { height: 8px; background: #2a2a2a; border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: #fce51e; transition: width .25s; }
+  #progressText { font-size: 12px; color: #999; margin-top: 7px; }
+
+  /* ── drawings via fortnite.gg's own UI ───────────────────────────────── */
+  #fnggBar {
+    height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    background: #1c1c1c; border-bottom: 1px solid #333; box-sizing: border-box;
+    font-size: 13px; color: #bbb;
+  }
+  #fnggBar select, #fnggBar button {
+    background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 4px;
+    padding: 4px 8px; font-size: 13px;
+  }
+  #fnggBar button:hover { background: #3a3a3a; cursor: pointer; }
+  #fnggStatus { margin-left: auto; font-size: 12px; color: #999; }
+  /* overflow:auto so an over-large fixed viewport can be panned rather than clipped */
+  #fnggHolder { position: absolute; top: 48px; left: 0; right: 0; bottom: 0; overflow: auto; }
+  #fnggFrame { width: 100%; height: 100%; border: 0; display: none; background: #2f3136; }
+  #fnggFrame.on { display: block; }
+  /* Fixed sizes lay the iframe out at real pixels (so fn.gg's Leaflet sees that
+     viewport), then scale it visually to fit. transform-origin keeps it anchored
+     top-left so the scaled box lines up with the scroll area. */
+  #fnggFrame.fixed { transform-origin: 0 0; }
+  #fnggScaleNote { font-size: 11px; color: #777; }
+  #fnggPlaceholder { padding: 34px; color: #ccc; font-size: 14px; line-height: 1.6; }
+
+  /* ── map page ────────────────────────────────────────────────────────── */
+  #mapHolder { position: absolute; top: 48px; left: 0; right: 0; bottom: 0; overflow: auto; }
+  #map { width: 100%; height: 100%; background: #2f3136; }
+  /* Fixed viewport: real pixel layout, scaled to fit. Leaflet 1.9 derives the
+     scale from getBoundingClientRect vs offsetWidth, so pointer coords stay
+     correct through the transform. */
+  #map.fixed { transform-origin: 0 0; }
+  #map .leaflet-container { background: #2f3136; }
+  #mapScaleNote { font-size: 11px; color: #777; }
+  #toolbar {
+    height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    background: #1c1c1c; border-bottom: 1px solid #333; box-sizing: border-box;
+  }
+  #toolbar select, #toolbar button, #toolbar input {
+    background: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 4px;
+    padding: 4px 8px; font-size: 13px;
+  }
+  #toolbar button:hover { background: #3a3a3a; cursor: pointer; }
+  #status { margin-left: auto; font-size: 12px; color: #999; }
+  #importPanel, #migratePanel {
+    position: absolute; top: 56px; right: 12px; width: 340px; max-height: 80%;
+    overflow: auto; background: #1c1c1c; border: 1px solid #444; border-radius: 6px;
+    padding: 12px; display: none; z-index: 1000;
+  }
+  #importPanel textarea { width: 100%; height: 120px; box-sizing: border-box; }
+  #importPanel.open, #migratePanel.open { display: block; }
+  /* fn.gg draws drawing labels as permanent outlined text, not hover bubbles.
+     Strip Leaflet's tooltip chrome so only the coloured text shows. */
+  .leaflet-tooltip.fngg-label {
+    background: none; border: none; box-shadow: none; padding: 0;
+    font-weight: 700; font-size: 13px; white-space: nowrap;
+    text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000,
+                  0 -1px 0 #000, 0 1px 0 #000, -1px 0 0 #000, 1px 0 0 #000;
+  }
+  .leaflet-tooltip.fngg-label::before { display: none; }  /* kill the pointer arrow */
+</style>
+</head>
+<body>
+
+<div id="tabbar">
+  <button class="tab active" data-page="pageMaps">Maps</button>
+  <button class="tab" data-page="pageFngg">Drawings</button>
+  <button class="tab" data-page="pageMap">Drawings (offline)</button>
+  <div class="spacer"></div>
+  <div class="brand">FNGG Map Studio</div>
+</div>
+
+<!-- ── MAPS TAB ─────────────────────────────────────────────────────────── -->
+<div id="pageMaps" class="page active">
+
+  <div class="panel">
+    <h2>Download a map version</h2>
+    <p class="hint">
+      Enter a fortnite.gg map version (e.g. <code>38.01</code>). The tile scheme is detected
+      automatically &mdash; older versions are full-res jpg, newer ones webp.
+      Downloading fetches every zoom level, so the map works offline afterwards.
+    </p>
+    <div class="row" style="margin-bottom:12px">
+      <input type="text" id="dlFilter" placeholder="filter e.g. 38" style="width:130px" />
+      <label class="check"><input type="checkbox" id="dlOnlyMine" /> only downloaded</label>
+      <span style="color:#666;font-size:12px">·</span>
+      <span style="color:#666;font-size:12px">or type a version</span>
+      <input type="text" id="dlVersion" placeholder="38.01" style="width:90px" />
+      <label class="check"><input type="checkbox" id="dlStitch" /> also stitch one big image (slow)</label>
+      <button class="btn primary" id="dlBtn">Download</button>
+      <button class="btn danger" id="dlCancel" disabled>Cancel</button>
+    </div>
+    <div class="row" style="margin-bottom:8px">
+      <span id="selCount" style="font-size:12px;color:#999">None selected — click map thumbnails to queue them.</span>
+      <button class="btn" id="dlClear" style="display:none;padding:3px 9px;font-size:12px">clear</button>
+    </div>
+    <div id="versionGrid" class="vgrid"><div style="color:#777;font-size:13px">Loading versions…</div></div>
+    <div id="progressWrap">
+      <div class="bar"><div id="progressBar"></div></div>
+      <div id="progressText"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Find new versions</h2>
+    <p class="hint">
+      Probes fortnite.gg for versions newer than the latest you have. Runs slowly on purpose &mdash;
+      bursting their CDN gets you rate-limited, which looks identical to "version doesn't exist".
+    </p>
+    <div class="row">
+      <button class="btn" id="scanBtn">Scan for new maps</button>
+      <span id="scanFound" style="font-size:12px;color:#999"></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Downloaded maps</h2>
+    <p class="hint">Stored in <code id="archivePath">~/FNGGMapDownloader</code></p>
+    <table class="versions">
+      <thead><tr>
+        <th><span class="help" title="The fortnite.gg map version — these track Fortnite patches. 38.00 was the Simpsons season launch; 41.20 is current.">Version</span></th>
+        <th><span class="help" title="How many map images are stored. A complete map is 16,384 — the island is a 128x128 grid of small squares, and 128 x 128 = 16,384. Fewer than that means the download didn't finish.">Tiles</span></th>
+        <th><span class="help" title="Disk space this version uses. Roughly 110-420 MB each; busier maps compress worse.">Size</span></th>
+        <th><span class="help" title="Whether the zoomed-OUT versions of the map were downloaded too. The 16,384 tiles are maximum detail only; seeing the whole island at once needs smaller copies. yes = zooming out is smooth. no = zoomed-out views would be blank.">Zoom pyramid</span></th>
+        <th><span class="help" title="Whether the whole map has been stitched into ONE picture file (finalImage.png) instead of 16,384 pieces. The app doesn't need it — it's for when you want the map as a file to edit, crop or post. This is what the old GUI's 'Open HQ Map' button showed.">Big image</span></th>
+        <th></th>
+      </tr></thead>
+      <tbody id="versionRows"><tr><td colspan="6" style="color:#777">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- ── DRAWINGS (fortnite.gg UI) ────────────────────────────────────────── -->
+<div id="pageFngg" class="page">
+  <div id="fnggBar">
+    <label>Drawing: <select id="fnggDrawing"></select></label>
+    <label>saved on <select id="fnggFrom" style="width:92px"></select></label>
+    <label>show on map <select id="fnggVersion" style="width:92px"></select></label>
+    <label>size <select id="fnggViewport" title="Lay the map out at a fixed viewport, scaled to fit this window — matches the bot's render sizes">
+      <option value="fit">Fit window</option>
+      <option value="native">Native</option>
+      <option value="1280x720">720p</option>
+      <option value="1920x1080">1080p</option>
+      <option value="2560x1440">2K</option>
+      <option value="3840x2160">4K</option>
+    </select></label>
+    <button id="fnggLoad">Load</button>
+    <button id="fnggSave">Save back</button>
+    <button id="fnggOpen" title="Open this view in your normal browser">Open in browser</button>
+    <span id="fnggScaleNote"></span>
+    <span id="fnggStatus"></span>
+  </div>
+  <div id="fnggHolder">
+    <div id="fnggPlaceholder">
+      Pick a drawing and press <strong>Load</strong>.<br><br>
+      <span style="color:#888;font-size:12px">
+        This renders your drawing using fortnite.gg's own map UI, over whichever
+        map version you archived. It needs an internet connection &mdash; use the
+        <em>Drawings (offline)</em> tab when you don't have one.
+      </span>
+    </div>
+    <iframe id="fnggFrame" title="fortnite.gg map"></iframe>
+  </div>
+</div>
+
+<!-- ── DROP MAPS TAB ────────────────────────────────────────────────────── -->
+<div id="pageMap" class="page">
+  <div id="toolbar">
+    <label>Version: <select id="versionSelect"></select></label>
+    <label>Drawing: <select id="drawingSelect"><option value="">(new)</option></select></label>
+    <input id="drawingName" placeholder="drawing name" style="width:120px" />
+    <button id="saveBtn">Save</button>
+    <button id="renameBtn">Rename</button>
+    <button id="deleteBtn">Delete</button>
+    <button id="importBtn">Import Drawing Link...</button>
+    <button id="migrateBtn">Migrate to Version...</button>
+    <label>size <select id="mapViewport" title="Lay the map out at a fixed viewport, scaled to fit — same presets as the bot">
+      <option value="fit">Fit window</option>
+      <option value="native">Native</option>
+      <option value="1280x720">720p</option>
+      <option value="1920x1080">1080p</option>
+      <option value="2560x1440">2K</option>
+      <option value="3840x2160">4K</option>
+    </select></label>
+    <span id="mapScaleNote"></span>
+    <span id="status"></span>
+  </div>
+
+  <div id="mapHolder"><div id="map"></div></div>
+
+  <div id="importPanel">
+    <h3 style="margin-top:0">Import fortnite.gg Drawing</h3>
+    <p style="font-size:12px;color:#aaa">
+      Paste a fortnite.gg drawing link and hit Fetch, or paste the raw JSON below.
+    </p>
+    <input id="importUrl" placeholder="https://fortnite.gg/?d=..." style="width:100%;box-sizing:border-box" />
+    <div style="margin:8px 0"><button id="importFetchBtn">Fetch</button></div>
+    <textarea id="importText" placeholder="Drawing JSON"></textarea>
+    <div style="margin-top:8px">
+      Onto version: <select id="importVersion"></select>
+    </div>
+    <div style="margin-top:8px">
+      <button id="importConfirm">Convert &amp; Load</button>
+      <button id="importClose">Close</button>
+    </div>
+    <p style="font-size:11px;color:#777;margin-top:10px">
+      Bookmarklet (drag to bookmarks bar): <a id="bookmarklet" href="#">FNGG Grab Drawing</a>
+    </p>
+  </div>
+
+  <div id="migratePanel">
+    <h3 style="margin-top:0">Migrate to another version</h3>
+    <p style="font-size:12px;color:#aaa">
+      Drag each marker to its new spot, then save. Positions are never moved automatically &mdash;
+      POIs get redesigned between versions, so only your eye can judge it.
+    </p>
+    <div>Target version: <select id="migrateVersion"></select></div>
+    <div style="margin-top:8px">Save as: <input id="migrateName" style="width:100%;box-sizing:border-box" /></div>
+    <div style="margin-top:8px">
+      <button id="migrateConfirm">Save to target</button>
+      <button id="migrateClose">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/vendor/leaflet.js"></script>
+<script src="/static/vendor/leaflet.draw.js"></script>
+<script src="/static/map.js?v=5"></script>
+<script src="/static/maps-tab.js?v=2"></script>
+<script src="/static/fngg-tab.js?v=1"></script>
+<script>
+  // Tab switching. Leaflet computes its size on init; if the map starts hidden it
+  // measures 0x0 and renders as a sliver, so invalidateSize() on every reveal.
+  document.querySelectorAll('#tabbar .tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      document.querySelectorAll('#tabbar .tab').forEach(function (x) { x.classList.remove('active'); });
+      document.querySelectorAll('.page').forEach(function (p) { p.classList.remove('active'); });
+      t.classList.add('active');
+      document.getElementById(t.dataset.page).classList.add('active');
+      if (t.dataset.page === 'pageMap' && window.state && window.state.map) {
+        // Re-apply the chosen viewport too, not just invalidateSize — a fixed
+        // size set while this tab was hidden was measured against a 0-size holder.
+        setTimeout(function () {
+          if (window.applyMapViewport) window.applyMapViewport();
+          else window.state.map.invalidateSize();
+        }, 50);
+      }
+      if (t.dataset.page === 'pageMaps' && window.refreshVersionTable) window.refreshVersionTable();
+      // Version list may have changed since this tab was last opened.
+      if (t.dataset.page === 'pageFngg' && window.initFnggTab) window.initFnggTab();
+    });
+  });
+</script>
+</body>
+</html>

@@ -9,48 +9,69 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up JDK 21
-      uses: actions/setup-java@v4
-      with:
-        java-version: '21'
-        distribution: 'temurin'
-    
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-    
-    - name: Build with Gradle
-      run: ./gradlew build
-    
-    - name: Package application
-      run: ./gradlew packageDistributable
-    
-    - name: List build outputs
-      run: dir build\compose\binaries /s
-    
-    - name: Upload Windows MSI
-      uses: actions/upload-artifact@v4
-      with:
-        name: windows-msi
-        path: build/compose/binaries/main/msi/*.msi
-    
-    - name: Upload Windows EXE
-      uses: actions/upload-artifact@v4
-      with:
-        name: windows-exe
-        path: build/compose/binaries/main/exe/*.exe
-    
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          build/compose/binaries/main/msi/*.msi
-          build/compose/binaries/main/exe/*.exe
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Sanity check
+        run: |
+          python -m py_compile app/*.py main.py
+          python -c "import app.server, app.downloader, app.scanner, app.archive, app.fngg_proxy; print('imports ok')"
+
+      # --add-data bundles files PyInstaller cannot infer, because nothing
+      # imports them: app/static is the whole frontend (without it the exe
+      # serves a blank page) and app/data holds the version list + the 108
+      # bundled map thumbnails (without it the picker comes up empty).
+      - name: Build exe
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --name "FNGGMapStudio"
+          --icon icon.ico
+          --add-data "app/static;app/static"
+          --add-data "app/data;app/data"
+          main.py
+
+      - name: Verify the exe actually serves its bundled frontend
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "dist\FNGGMapStudio.exe" -ArgumentList "--no-ui","--port","8899"
+          Start-Sleep -Seconds 15
+          $ok = $true
+          foreach ($p in @("/api/versions", "/", "/static/map.js", "/static/vendor/leaflet.js", "/api/known-versions")) {
+            try {
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:8899$p" -UseBasicParsing -TimeoutSec 10
+              Write-Host "$p -> $($r.StatusCode)"
+            } catch {
+              Write-Host "$p -> FAILED: $_"
+              $ok = $false
+            }
+          }
+          Get-Process FNGGMapStudio -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $ok) { exit 1 }
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FNGGMapStudio-windows
+          path: dist/FNGGMapStudio.exe
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/FNGGMapStudio.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

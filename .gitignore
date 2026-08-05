@@ -1,45 +1,26 @@
-.gradle
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller output. The exe is a build artefact, not source -- attach it to a
+# release rather than committing 34 MB per rebuild.
 build/
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
+dist/
+*.spec
 
-### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
-*.iws
-*.iml
-*.ipr
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
-
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
+# Editors / OS
 .vscode/
-
-### Mac OS ###
+.idea/
 .DS_Store
-/.idea/
-/.kotlin/
-/.run/
+Thumbs.db
+
+# Local runtime logs
+*.log
+
+# NOT ignored, deliberately:
+#   app/data/known_versions.txt  - the shipped version list
+#   app/data/previews/           - 108 bundled map thumbnails (~3 MB)
+# Both are needed at runtime; PyInstaller bundles them via --add-data.
