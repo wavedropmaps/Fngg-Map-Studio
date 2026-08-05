@@ -1,6 +1,19 @@
 const WORLD_BOUNDS = [[-256, 0], [0, 256]];
 const NATIVE_ZOOM = 7;
 const FNGG_YELLOW = "#fce51e";
+// fn.gg's circlemarkers carry no radius (it's a fixed-size screen dot), so pick one.
+const DOT_RADIUS_PX = 5;
+// fn.gg shows label text permanently in the shape's own colour, not on hover.
+const LABEL_OPTS = { permanent: true, direction: "right", className: "fngg-label", offset: [6, 0] };
+
+function labelFor(text, color) {
+  // Build as a DOM node rather than an HTML string: label text comes from the
+  // fn.gg drawing and is not ours to trust as markup.
+  const span = document.createElement("span");
+  span.textContent = text;
+  span.style.color = color || FNGG_YELLOW;
+  return span;
+}
 
 const state = {
   version: null,
@@ -116,22 +129,50 @@ function serializeDrawing() {
   const markers = [];
   const lines = [];
   const boxes = [];
+  const shapes = [];
+  const circles = [];
+  const dots = [];
+  // Order matters: Leaflet's hierarchy is Rectangle < Polygon < Polyline and
+  // Circle < CircleMarker, so the most specific class has to be tested first
+  // or a rectangle serializes as a line and a circle as a dot.
   state.drawnItems.eachLayer((layer) => {
     if (layer instanceof L.Rectangle) {
       const b = layer.getBounds();
       boxes.push({ bounds: [[b.getSouth(), b.getWest()], [b.getNorth(), b.getEast()]], color: layer.options.color });
+    } else if (layer instanceof L.Polygon) {
+      shapes.push({ latlngs: layer.getLatLngs()[0].map((p) => [p.lat, p.lng]), color: layer.options.color });
     } else if (layer instanceof L.Polyline) {
       lines.push({ latlngs: layer.getLatLngs().map((p) => [p.lat, p.lng]), color: layer.options.color });
+    } else if (layer instanceof L.Circle) {
+      const p = layer.getLatLng();
+      circles.push({ lat: p.lat, lng: p.lng, radius: layer.getRadius(), color: layer.options.color });
+    } else if (layer instanceof L.CircleMarker) {
+      const p = layer.getLatLng();
+      dots.push({ lat: p.lat, lng: p.lng, color: layer.options.color, tooltip: layer.options.tooltip });
     } else if (layer instanceof L.Marker) {
       const p = layer.getLatLng();
       markers.push({ lat: p.lat, lng: p.lng, color: layer.options.color || FNGG_YELLOW });
     }
   });
-  return { version: state.version, markers, lines, boxes };
+  return { version: state.version, markers, lines, boxes, shapes, circles, dots };
 }
 
 function renderDrawing(data) {
   state.drawnItems.clearLayers();
+  for (const s of data.shapes || []) {
+    L.polygon(s.latlngs, { color: s.color || "#3388ff" }).addTo(state.drawnItems);
+  }
+  for (const c of data.circles || []) {
+    L.circle([c.lat, c.lng], { radius: c.radius, color: c.color || "#3388ff" }).addTo(state.drawnItems);
+  }
+  for (const d of data.dots || []) {
+    const dot = L.circleMarker([d.lat, d.lng], {
+      radius: DOT_RADIUS_PX,
+      color: d.color || "#3388ff",
+      tooltip: d.tooltip,
+    }).addTo(state.drawnItems);
+    if (d.tooltip) dot.bindTooltip(labelFor(d.tooltip, d.color), LABEL_OPTS);
+  }
   for (const m of data.markers || []) {
     L.marker([m.lat, m.lng], { icon: fnggMarkerIcon(m.color), color: m.color || FNGG_YELLOW }).addTo(state.drawnItems);
   }
@@ -150,7 +191,16 @@ function convertFortniteDrawing(raw) {
     bounds: [r.latlng[0], r.latlng[2]],
     color: r.color,
   }));
-  return { markers, lines, boxes };
+  // fn.gg also emits polygon/circle/circlemarker; without these the import drops
+  // ~70% of a typical drop-spot drawing (and every circlemarker tooltip with it).
+  const shapes = (raw.polygon || []).map((p) => ({ latlngs: p.latlng, color: p.color }));
+  const circles = (raw.circle || []).map((c) => ({
+    lat: c.latlng[0], lng: c.latlng[1], radius: c.radius, color: c.color,
+  }));
+  const dots = (raw.circlemarker || []).map((c) => ({
+    lat: c.latlng[0], lng: c.latlng[1], color: c.color, tooltip: c.tooltip,
+  }));
+  return { markers, lines, boxes, shapes, circles, dots };
 }
 
 const BOOKMARKLET_SRC = `(function(){

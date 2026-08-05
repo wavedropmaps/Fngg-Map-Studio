@@ -177,7 +177,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        # Decode %20 etc. -- drawing names may contain spaces, and the name regex
+        # below rejects "/" so unquoting can't open up a traversal.
+        path = urllib.parse.unquote(self.path.split("?", 1)[0])
 
         if path == "/" or path == "":
             return self._send_file(STATIC_ROOT / "index.html", "text/html")
@@ -228,7 +230,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404, "Not found")
 
     def do_POST(self):
-        path = self.path.split("?", 1)[0]
+        # Decode %20 etc. -- drawing names may contain spaces, and the name regex
+        # below rejects "/" so unquoting can't open up a traversal.
+        path = urllib.parse.unquote(self.path.split("?", 1)[0])
         m = re.match(r"^/api/drawings/(?P<version>v[\d.]+)/(?P<name>[\w\-. ]+)$", path)
         if not m:
             self.send_error(404, "Not found")
@@ -249,7 +253,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._send_json({"ok": True, "path": str(out_path)})
 
     def do_DELETE(self):
-        path = self.path.split("?", 1)[0]
+        # Decode %20 etc. -- drawing names may contain spaces, and the name regex
+        # below rejects "/" so unquoting can't open up a traversal.
+        path = urllib.parse.unquote(self.path.split("?", 1)[0])
         m = re.match(r"^/api/drawings/(?P<version>v[\d.]+)/(?P<name>[\w\-. ]+)$", path)
         if not m:
             self.send_error(404, "Not found")
