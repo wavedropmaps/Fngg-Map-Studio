@@ -173,6 +173,10 @@ def version_info(version: str, refresh: bool = False) -> dict:
         # The frontend needs this for maxNativeZoom; hardcoding 7 there breaks
         # any version that only covers a lower zoom.
         "native_zoom": load_scheme(version)["zoom"],
+        # Broken out so the delete dialog can offer "just the big image" -- it is
+        # often ~145 MB, far more than the tiles, and it is regenerable.
+        "final_image_bytes": final_image(version).stat().st_size
+        if final_image(version).is_file() else 0,
     }
     _info_cache[key] = info
     return info

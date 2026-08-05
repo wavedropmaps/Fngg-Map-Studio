@@ -131,6 +131,16 @@
       });
       cell.appendChild(openFolder);
 
+      // Deleting hundreds of MB deserves a dialog that says exactly what goes.
+      // Drawings live outside the version folder, so they survive unless asked
+      // for -- they're your work, and unlike tiles they can't be re-downloaded.
+      const del = document.createElement('button');
+      del.className = 'btn danger';
+      del.style.marginLeft = '6px';
+      del.textContent = 'Delete…';
+      del.onclick = () => openDeleteDialog(v);
+      cell.appendChild(del);
+
       if (v.has_final_image) {
         const openImg = document.createElement('button');
         openImg.className = 'btn';
@@ -169,6 +179,62 @@
     }
   }
   window.refreshVersionTable = refreshVersionTable;
+
+  /* Delete dialog.
+
+     Two separate things can be removed, and conflating them would be a nasty
+     surprise:
+       - the MAP (tiles + zoom levels + big image) -> re-downloadable
+       - the DRAWINGS saved against it              -> your own work, gone for good
+     They live in different folders, so a map delete leaves drawings alone unless
+     you tick the box. The big image is offered on its own because it's usually
+     the largest single item and is regenerable from tiles already on disk. */
+  async function openDeleteDialog(v) {
+    const drawings = v.drawings || 0;
+    const finalMB = v.final_image_bytes ? fmtBytes(v.final_image_bytes) : null;
+    const totalMB = fmtBytes(v.bytes);
+
+    const lines = [
+      `Delete ${v.version}?`,
+      '',
+      `  1  Big image only${finalMB ? ' (' + finalMB + ')' : ' — none to delete'}`,
+      '       keeps the map usable; you can re-stitch it any time',
+      '',
+      `  2  The whole map (${totalMB})`,
+      '       tiles + zoom levels + big image. Re-downloadable (~4 min).',
+      '',
+      'Type 1 or 2, or Cancel.',
+    ];
+    const choice = (prompt(lines.join('\n'), '') || '').trim();
+    if (choice !== '1' && choice !== '2') return;
+
+    let dropDrawings = false;
+    if (choice === '2' && drawings > 0) {
+      dropDrawings = confirm(
+        `${v.version} also has ${drawings} saved drawing${drawings === 1 ? '' : 's'}.\n\n` +
+        `OK    = delete the drawings too (CANNOT be undone — they are not re-downloadable)\n` +
+        `Cancel = keep the drawings, delete only the map`);
+    }
+
+    const what = choice === '1' ? 'final' : 'all';
+    setProgress(0, 0, `deleting ${v.version}…`);
+    try {
+      const r = await fetch(
+        `/api/versions/${v.version}?what=${what}&drawings=${dropDrawings ? 1 : 0}`,
+        { method: 'DELETE' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+      resetProgressBar();
+      $('progressText').textContent =
+        `Deleted ${d.removed.join(' + ')} for ${v.version} — freed ${fmtBytes(d.freed_bytes)}.`;
+    } catch (e) {
+      resetProgressBar();
+      $('progressText').textContent = 'Delete failed: ' + e.message;
+    }
+    refreshVersionTable();
+    loadKnownVersions();
+    if (window.reloadVersionsForMapTab) window.reloadVersionsForMapTab();
+  }
 
   // The old Kotlin GUI showed a thumbnail of the island next to each version,
   // which is the only way to tell them apart — "38.01" means nothing on its own.

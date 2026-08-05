@@ -14,6 +14,7 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -557,7 +558,54 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── DELETE ────────────────────────────────────────────────────────────────
     def _handle_delete(self):
-        path, _ = self._path_and_query()
+        path, query = self._path_and_query()
+
+        m = re.match(r"^/api/versions/(?P<v>v[\d.]+)$", path)
+        if m:
+            version = m["v"]
+            what = (query.get("what") or ["all"])[0]
+            drop_drawings = (query.get("drawings") or ["0"])[0] == "1"
+            if not re.fullmatch(r"[\d.]+", version.lstrip("v")):
+                return self._send_json({"error": "Bad version"}, status=400)
+
+            vdir = archive.version_dir(version)
+            root = archive.ARCHIVE_ROOT.resolve()
+            removed, freed = [], 0
+
+            def _rm(target: Path, label: str):
+                nonlocal freed
+                if not target.exists():
+                    return
+                # Never delete outside the archive, whatever the input looked like.
+                try:
+                    target.resolve().relative_to(root)
+                except ValueError:
+                    raise ValueError(f"Refusing to delete outside the archive: {target}")
+                if target.is_dir():
+                    size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+                    shutil.rmtree(target)
+                else:
+                    size = target.stat().st_size
+                    target.unlink()
+                freed += size
+                removed.append(label)
+
+            if what == "final":
+                _rm(archive.final_image(version), "big image")
+            elif what in ("all", "tiles"):
+                _rm(vdir, "map tiles + big image")
+            else:
+                return self._send_json({"error": f"Unknown what={what!r}"}, status=400)
+
+            # Drawings live OUTSIDE the version folder, so they survive a map
+            # delete unless explicitly asked for -- they're the user's own work
+            # and are not re-downloadable.
+            if drop_drawings:
+                _rm(archive.DRAWINGS_ROOT / version, "drawings")
+
+            archive.invalidate_info(version)
+            return self._send_json({"ok": True, "removed": removed, "freed_bytes": freed})
+
         m = re.match(r"^/api/drawings/(?P<v>v[\d.]+)/(?P<name>[\w\-. ]+)$", path)
         if not m:
             self.send_error(404, "Not found")
